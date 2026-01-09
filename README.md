@@ -24,7 +24,7 @@ Built out of frustration with manual VMware setup after every kernel update. Thi
 ## Installation
 ## Oneliner 
 ```bash
- curl -fsSL https://raw.githubusercontent.com/0xb0rn3/vmwarecommander/main/vmwarecommander | sudo bash
+ curl -fsSL https://raw.githubusercontent.com/0xb0rn3/vmwarecommander/main/vmwarecommander | bash
 ```
 ## OR MANUALLY
 ```bash
