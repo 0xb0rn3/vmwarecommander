@@ -2,11 +2,12 @@
 
 ################################################################################
 # vmwarecommander
-# Version: 0.0.3
+# Version: 1.0.1
 # Developer: 0xb0rn3 | oxbv1
 # 
-# Automates VMware Workstation installation on Arch Linux
-# Handles kernel detection, dependencies, and automatic DKMS rebuilds
+# Automates VMware Workstation installation across Linux distributions
+# Supports: Arch, Debian/Ubuntu, Fedora/RHEL, openSUSE
+# Handles kernel detection, dependencies, and automatic module rebuilds
 ################################################################################
 
 # Exit on any error
@@ -27,7 +28,8 @@ cat << "EOF"
  ╚╝ ╩ ╩╚╩╝╩ ╩╩╚═╚═╝  ╚═╝╚═╝╩ ╩╩ ╩╩ ╩╝╚╝═╩╝╚═╝╩╚═
 EOF
 echo -e "${NC}"
-echo -e "${YELLOW}v0.0.3 | 0xb0rn3 | oxbv1${NC}\n"
+echo -e "${YELLOW}v1.0.1 | 0xb0rn3 | oxbv1${NC}"
+echo -e "${YELLOW}Universal Linux Installer${NC}\n"
 
 # Root check
 if [[ $EUID -ne 0 ]]; then
@@ -39,44 +41,67 @@ fi
 ACTUAL_USER=${SUDO_USER:-$USER}
 USER_HOME=$(eval echo "~$ACTUAL_USER")
 
+# Detect distribution
+detect_distro() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        DISTRO=$ID
+        DISTRO_FAMILY=$ID_LIKE
+        DISTRO_VERSION=$VERSION_ID
+    elif [[ -f /etc/arch-release ]]; then
+        DISTRO="arch"
+        DISTRO_FAMILY="arch"
+    elif [[ -f /etc/debian_version ]]; then
+        DISTRO="debian"
+        DISTRO_FAMILY="debian"
+    elif [[ -f /etc/redhat-release ]]; then
+        DISTRO="rhel"
+        DISTRO_FAMILY="rhel fedora"
+    else
+        echo -e "${RED}[!] Unable to detect Linux distribution${NC}"
+        exit 1
+    fi
+    
+    # Normalize distro family
+    case "$DISTRO" in
+        arch|manjaro|endeavouros|artix)
+            DISTRO_FAMILY="arch"
+            ;;
+        ubuntu|debian|mint|pop|elementary)
+            DISTRO_FAMILY="debian"
+            ;;
+        fedora|rhel|centos|rocky|almalinux)
+            DISTRO_FAMILY="fedora"
+            ;;
+        opensuse*|sles)
+            DISTRO_FAMILY="suse"
+            ;;
+    esac
+}
+
 # Check for internet connection
 echo -e "${BLUE}[*] Checking prerequisites${NC}"
-if ! ping -c 1 archlinux.org &> /dev/null; then
+if ! ping -c 1 8.8.8.8 &> /dev/null; then
     echo -e "${RED}[!] No internet connection detected${NC}"
     exit 1
 fi
 echo -e "      ${GREEN}✓${NC} Internet connection active"
 
-# Check if running on Arch Linux
-if [[ ! -f /etc/arch-release ]]; then
-    echo -e "${RED}[!] This script is designed for Arch Linux only${NC}"
-    exit 1
-fi
-echo -e "      ${GREEN}✓${NC} Arch Linux detected"
+# Detect distribution
+detect_distro
+echo -e "      ${GREEN}✓${NC} Distribution: $DISTRO ($DISTRO_FAMILY)"
 
 echo -e "\n${GREEN}[*] Starting VMware Workstation setup${NC}\n"
 
 # Step 1: Kernel detection
 echo -e "${BLUE}[1/8]${NC} Detecting kernel type"
 KERNEL_VER=$(uname -r)
-if [[ "$KERNEL_VER" == *"lts"* ]]; then
-    HEADERS_PKG="linux-lts-headers"
-    echo -e "      Kernel: LTS (${KERNEL_VER})"
-elif [[ "$KERNEL_VER" == *"zen"* ]]; then
-    HEADERS_PKG="linux-zen-headers"
-    echo -e "      Kernel: Zen (${KERNEL_VER})"
-elif [[ "$KERNEL_VER" == *"hardened"* ]]; then
-    HEADERS_PKG="linux-hardened-headers"
-    echo -e "      Kernel: Hardened (${KERNEL_VER})"
-else
-    HEADERS_PKG="linux-headers"
-    echo -e "      Kernel: Standard (${KERNEL_VER})"
-fi
+echo -e "      Kernel: ${KERNEL_VER}"
 
 # Step 2: Check for existing VMware installation
 echo -e "\n${BLUE}[2/8]${NC} Checking for existing VMware installation"
-if pacman -Qi vmware-workstation &> /dev/null; then
-    echo -e "      ${YELLOW}⚠${NC} VMware Workstation is already installed"
+if command -v vmware &> /dev/null; then
+    echo -e "      ${YELLOW}⚠${NC} VMware Workstation appears to be installed"
     read -p "      Continue anyway? (y/N): " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -85,80 +110,214 @@ if pacman -Qi vmware-workstation &> /dev/null; then
     fi
 fi
 
-# Step 3: System update and base dependencies
-echo -e "\n${BLUE}[3/8]${NC} Installing base dependencies"
-pacman -Syu --needed --noconfirm \
-    base-devel \
-    "$HEADERS_PKG" \
-    dkms \
-    libxcrypt-compat \
-    libxml2 \
-    git \
-    fuse2 \
-    gtkmm3 \
-    libcanberra \
-    pcsclite
+# Step 3: Install dependencies based on distro
+echo -e "\n${BLUE}[3/8]${NC} Installing dependencies for $DISTRO_FAMILY"
 
-# Step 4: AUR package builder function
-build_aur_package() {
-    local PKG_NAME=$1
+case "$DISTRO_FAMILY" in
+    arch)
+        echo -e "      Installing Arch Linux dependencies..."
+        pacman -Syu --needed --noconfirm \
+            base-devel \
+            linux-headers \
+            dkms \
+            libxcrypt-compat \
+            libxml2 \
+            git \
+            fuse2 \
+            gtkmm3 \
+            libcanberra \
+            pcsclite \
+            gcc \
+            make
+        
+        # Build AUR packages
+        build_aur_package() {
+            local PKG_NAME=$1
+            
+            if pacman -Qi "$PKG_NAME" &> /dev/null; then
+                echo -e "      ${PKG_NAME} is already installed"
+                return 0
+            fi
+            
+            echo -e "      Building ${PKG_NAME} from AUR"
+            
+            local BUILD_DIR="/tmp/aur-${PKG_NAME}-$$"
+            mkdir -p "$BUILD_DIR"
+            cd "$BUILD_DIR"
+            
+            # Clone with verbose error handling
+            echo -e "      Cloning from AUR..."
+            if ! sudo -u "$ACTUAL_USER" git clone "https://aur.archlinux.org/${PKG_NAME}.git" . ; then
+                echo -e "      ${RED}✗${NC} Failed to clone ${PKG_NAME} from AUR"
+                echo -e "      ${YELLOW}Attempting alternative URL...${NC}"
+                
+                # Try alternative AUR URL
+                if ! sudo -u "$ACTUAL_USER" git clone "https://aur.archlinux.org/${PKG_NAME}" . ; then
+                    echo -e "      ${RED}✗${NC} Alternative clone also failed"
+                    cd /
+                    rm -rf "$BUILD_DIR"
+                    return 1
+                fi
+            fi
+            
+            # Verify PKGBUILD exists
+            if [[ ! -f "PKGBUILD" ]]; then
+                echo -e "      ${RED}✗${NC} PKGBUILD not found in ${PKG_NAME}"
+                cd /
+                rm -rf "$BUILD_DIR"
+                return 1
+            fi
+            
+            echo -e "      Building package..."
+            # Build with error handling
+            if ! sudo -u "$ACTUAL_USER" makepkg -si --noconfirm; then
+                echo -e "      ${RED}✗${NC} Failed to build ${PKG_NAME}"
+                echo -e "      ${YELLOW}Check build log above for details${NC}"
+                cd /
+                rm -rf "$BUILD_DIR"
+                return 1
+            fi
+            
+            cd /
+            rm -rf "$BUILD_DIR"
+            echo -e "      ${GREEN}✓${NC} ${PKG_NAME} installed successfully"
+            return 0
+        }
+        
+        echo -e "\n${BLUE}[4/8]${NC} Building AUR packages"
+        build_aur_package "vmware-keymaps" || {
+            echo -e "${YELLOW}[!] vmware-keymaps installation failed, but continuing...${NC}"
+        }
+        
+        build_aur_package "vmware-workstation" || {
+            echo -e "${RED}[!] Failed to install VMware Workstation from AUR${NC}"
+            echo -e "${YELLOW}[*] You can install manually with:${NC}"
+            echo -e "    ${BLUE}yay -S vmware-workstation${NC}"
+            echo -e "    ${BLUE}or paru -S vmware-workstation${NC}"
+            echo -e ""
+            read -p "      Skip VMware installation and continue? (y/N): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+            SKIP_VMWARE_INSTALL=true
+        }
+        ;;
+        
+    debian)
+        echo -e "      Installing Debian/Ubuntu dependencies..."
+        apt-get update
+        apt-get install -y \
+            build-essential \
+            linux-headers-$(uname -r) \
+            dkms \
+            git \
+            gcc \
+            make \
+            perl \
+            libfuse2 \
+            libgtkmm-3.0-1v5 \
+            libcanberra-gtk3-module \
+            pcscd
+        
+        MANUAL_INSTALL=true
+        ;;
+        
+    fedora)
+        echo -e "      Installing Fedora/RHEL dependencies..."
+        if command -v dnf &> /dev/null; then
+            PKG_MGR="dnf"
+        else
+            PKG_MGR="yum"
+        fi
+        
+        $PKG_MGR install -y \
+            kernel-devel \
+            kernel-headers \
+            gcc \
+            make \
+            perl \
+            dkms \
+            git \
+            fuse \
+            gtkmm30 \
+            libcanberra-gtk3 \
+            pcsc-lite
+        
+        MANUAL_INSTALL=true
+        ;;
+        
+    suse)
+        echo -e "      Installing openSUSE dependencies..."
+        zypper install -y \
+            kernel-devel \
+            gcc \
+            make \
+            perl \
+            dkms \
+            git \
+            fuse \
+            gtkmm3 \
+            libcanberra-gtk3-0 \
+            pcsc-lite
+        
+        MANUAL_INSTALL=true
+        ;;
+        
+    *)
+        echo -e "${RED}[!] Unsupported distribution family: $DISTRO_FAMILY${NC}"
+        exit 1
+        ;;
+esac
+
+# Step 4: Manual VMware installation for non-Arch distros
+if [[ "$MANUAL_INSTALL" == "true" ]]; then
+    echo -e "\n${BLUE}[4/8]${NC} Downloading VMware Workstation"
     
-    if pacman -Qi "$PKG_NAME" &> /dev/null; then
-        echo -e "      ${PKG_NAME} is already installed"
-        return 0
+    # Check if VMware bundle already exists
+    VMWARE_BUNDLE=$(find /tmp ~/Downloads -name "VMware-Workstation-*.bundle" 2>/dev/null | head -n 1)
+    
+    if [[ -z "$VMWARE_BUNDLE" ]]; then
+        echo -e "      ${YELLOW}⚠${NC} VMware Workstation bundle not found"
+        echo -e "      ${BLUE}Please download VMware Workstation from:${NC}"
+        echo -e "      https://www.vmware.com/products/workstation-pro/workstation-pro-evaluation.html"
+        echo -e ""
+        read -p "      Enter path to VMware bundle (or press Enter to skip): " VMWARE_BUNDLE
+        
+        if [[ -z "$VMWARE_BUNDLE" ]] || [[ ! -f "$VMWARE_BUNDLE" ]]; then
+            echo -e "${YELLOW}[*] Skipping VMware installation. Install manually later.${NC}"
+            SKIP_VMWARE_INSTALL=true
+        fi
     fi
     
-    echo -e "      Building ${PKG_NAME} from AUR"
-    
-    local BUILD_DIR="/tmp/aur-${PKG_NAME}-$$"
-    mkdir -p "$BUILD_DIR"
-    cd "$BUILD_DIR"
-    
-    # Clone with error handling
-    if ! sudo -u "$ACTUAL_USER" git clone "https://aur.archlinux.org/${PKG_NAME}.git" . 2>/dev/null; then
-        echo -e "      ${RED}✗${NC} Failed to clone ${PKG_NAME} from AUR"
-        cd /
-        rm -rf "$BUILD_DIR"
-        return 1
+    if [[ "$SKIP_VMWARE_INSTALL" != "true" ]]; then
+        echo -e "      Found bundle: $(basename $VMWARE_BUNDLE)"
+        chmod +x "$VMWARE_BUNDLE"
+        
+        echo -e "      ${BLUE}Installing VMware Workstation...${NC}"
+        "$VMWARE_BUNDLE" --console --required --eulas-agreed || {
+            echo -e "${RED}[!] VMware installation failed${NC}"
+            exit 1
+        }
     fi
-    
-    # Build with error handling
-    if ! sudo -u "$ACTUAL_USER" makepkg -si --noconfirm; then
-        echo -e "      ${RED}✗${NC} Failed to build ${PKG_NAME}"
-        cd /
-        rm -rf "$BUILD_DIR"
-        return 1
-    fi
-    
-    cd /
-    rm -rf "$BUILD_DIR"
-    return 0
-}
-
-# Step 5: Build AUR dependencies
-echo -e "\n${BLUE}[4/8]${NC} Building AUR packages"
-if ! build_aur_package "vmware-keymaps"; then
-    echo -e "${RED}[!] Failed to install vmware-keymaps${NC}"
-    exit 1
+else
+    echo -e "\n${BLUE}[4/8]${NC} VMware installation complete (AUR)"
 fi
 
-if ! build_aur_package "vmware-workstation"; then
-    echo -e "${RED}[!] Failed to install vmware-workstation${NC}"
-    exit 1
-fi
+# Step 5: Setup systemd hook/service for automatic module rebuild
+echo -e "\n${BLUE}[5/8]${NC} Setting up automatic module rebuild"
 
-# Step 6: Pacman hook creation
-echo -e "\n${BLUE}[5/8]${NC} Creating Pacman hook for automatic DKMS rebuilds"
-mkdir -p /etc/pacman.d/hooks
-
-# Backup existing hook if present
-if [[ -f /etc/pacman.d/hooks/90-vmware-dkms.hook ]]; then
-    cp /etc/pacman.d/hooks/90-vmware-dkms.hook \
-       /etc/pacman.d/hooks/90-vmware-dkms.hook.backup.$(date +%s)
-    echo -e "      Backed up existing hook"
-fi
-
-cat > /etc/pacman.d/hooks/90-vmware-dkms.hook << 'HOOKEOF'
+case "$DISTRO_FAMILY" in
+    arch)
+        # Pacman hook
+        mkdir -p /etc/pacman.d/hooks
+        
+        if [[ -f /etc/pacman.d/hooks/90-vmware-dkms.hook ]]; then
+            cp /etc/pacman.d/hooks/90-vmware-dkms.hook \
+               /etc/pacman.d/hooks/90-vmware-dkms.hook.backup.$(date +%s)
+        fi
+        
+        cat > /etc/pacman.d/hooks/90-vmware-dkms.hook << 'HOOKEOF'
 [Trigger]
 Operation = Install
 Operation = Upgrade
@@ -174,39 +333,105 @@ Description = Rebuilding VMware kernel modules
 When = PostTransaction
 Exec = /usr/bin/dkms autoinstall
 HOOKEOF
+        echo -e "      ${GREEN}✓${NC} Pacman hook installed"
+        ;;
+        
+    debian)
+        # APT hook
+        mkdir -p /etc/apt/apt.conf.d
+        cat > /etc/apt/apt.conf.d/99-vmware-dkms << 'APTEOF'
+DPkg::Post-Invoke {
+    "if [ -x /usr/sbin/dkms ]; then /usr/sbin/dkms autoinstall --kernelver $(uname -r) 2>/dev/null || true; fi";
+};
+APTEOF
+        echo -e "      ${GREEN}✓${NC} APT hook installed"
+        ;;
+        
+    fedora)
+        # DNF/YUM hook
+        mkdir -p /etc/dnf/plugins/post-transaction-actions.d
+        cat > /etc/dnf/plugins/post-transaction-actions.d/vmware-dkms.action << 'DNFEOF'
+kernel*:install,update:/usr/sbin/dkms autoinstall 2>/dev/null || true
+DNFEOF
+        echo -e "      ${GREEN}✓${NC} DNF hook installed"
+        ;;
+        
+    suse)
+        # Zypper service
+        cat > /etc/systemd/system/vmware-dkms-rebuild.service << 'SYSDEOF'
+[Unit]
+Description=Rebuild VMware DKMS modules
+After=multi-user.target
 
-echo -e "      ${GREEN}✓${NC} Hook installed at /etc/pacman.d/hooks/90-vmware-dkms.hook"
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/dkms autoinstall
 
-# Step 7: Initial DKMS build
-echo -e "\n${BLUE}[6/8]${NC} Building VMware kernel modules with DKMS"
-if dkms status | grep -q vmware; then
-    echo -e "      Running DKMS autoinstall..."
-    dkms autoinstall || echo -e "      ${YELLOW}⚠${NC} DKMS autoinstall reported warnings (may be normal)"
+[Install]
+WantedBy=multi-user.target
+SYSDEOF
+        systemctl daemon-reload
+        echo -e "      ${GREEN}✓${NC} Systemd service installed"
+        ;;
+esac
+
+# Step 6: Initial DKMS build
+if [[ "$SKIP_VMWARE_INSTALL" != "true" ]]; then
+    echo -e "\n${BLUE}[6/8]${NC} Building VMware kernel modules"
+    if command -v dkms &> /dev/null; then
+        echo -e "      Running DKMS autoinstall..."
+        dkms autoinstall 2>&1 | tee /tmp/dkms-build.log || {
+            echo -e "      ${YELLOW}⚠${NC} DKMS build had warnings (check /tmp/dkms-build.log)"
+        }
+    else
+        echo -e "      ${YELLOW}⚠${NC} DKMS not available, skipping module build"
+    fi
 else
-    echo -e "      ${YELLOW}⚠${NC} No VMware DKMS modules found to build"
+    echo -e "\n${BLUE}[6/8]${NC} Skipping DKMS build (VMware not installed)"
 fi
 
-# Step 8: Service configuration
+# Step 7: Configure VMware services
 echo -e "\n${BLUE}[7/8]${NC} Configuring VMware services"
-systemctl enable vmware-networks.service 2>/dev/null || true
-systemctl enable vmware-usbarbitrator.service 2>/dev/null || true
 
-# Start services
-systemctl start vmware-networks.service 2>/dev/null || echo -e "      ${YELLOW}⚠${NC} Could not start vmware-networks.service"
-systemctl start vmware-usbarbitrator.service 2>/dev/null || echo -e "      ${YELLOW}⚠${NC} Could not start vmware-usbarbitrator.service"
+if [[ "$SKIP_VMWARE_INSTALL" != "true" ]]; then
+    # Find VMware service files
+    VMWARE_SERVICES_DIR=""
+    for dir in /usr/lib/systemd/system /lib/systemd/system /etc/systemd/system; do
+        if [[ -d "$dir" ]] && ls "$dir"/vmware*.service &> /dev/null; then
+            VMWARE_SERVICES_DIR="$dir"
+            break
+        fi
+    done
 
-# Step 9: Load kernel modules
-echo -e "\n${BLUE}[8/8]${NC} Loading VMware kernel modules"
-if modprobe vmw_vmci 2>/dev/null; then
-    echo -e "      ${GREEN}✓${NC} vmw_vmci loaded"
+    if [[ -n "$VMWARE_SERVICES_DIR" ]]; then
+        systemctl daemon-reload
+        
+        for service in vmware-networks vmware-usbarbitrator vmware-hostd; do
+            if [[ -f "$VMWARE_SERVICES_DIR/${service}.service" ]]; then
+                systemctl enable ${service}.service 2>/dev/null || true
+                systemctl start ${service}.service 2>/dev/null || echo -e "      ${YELLOW}⚠${NC} Could not start ${service}.service"
+            fi
+        done
+    else
+        echo -e "      ${YELLOW}⚠${NC} VMware services not found"
+    fi
 else
-    echo -e "      ${RED}✗${NC} Failed to load vmw_vmci"
+    echo -e "      ${YELLOW}⚠${NC} Skipping service configuration (VMware not installed)"
 fi
 
-if modprobe vmmon 2>/dev/null; then
-    echo -e "      ${GREEN}✓${NC} vmmon loaded"
+# Step 8: Load kernel modules
+echo -e "\n${BLUE}[8/8]${NC} Loading VMware kernel modules"
+
+if [[ "$SKIP_VMWARE_INSTALL" != "true" ]]; then
+    for module in vmw_vmci vmmon vmnet; do
+        if modprobe $module 2>/dev/null; then
+            echo -e "      ${GREEN}✓${NC} $module loaded"
+        else
+            echo -e "      ${YELLOW}⚠${NC} Could not load $module (may load after reboot)"
+        fi
+    done
 else
-    echo -e "      ${RED}✗${NC} Failed to load vmmon"
+    echo -e "      ${YELLOW}⚠${NC} Skipping module loading (VMware not installed)"
 fi
 
 # Final verification
@@ -214,74 +439,98 @@ echo -e "\n${BLUE}[*]${NC} Installation verification"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 ERRORS=0
+WARNINGS=0
 
-# Check modules
-if lsmod | grep -q "vmmon"; then
-    echo -e "      ${GREEN}✓${NC} vmmon kernel module loaded"
-else
-    echo -e "      ${RED}✗${NC} vmmon kernel module NOT loaded"
-    ((ERRORS++))
-fi
+if [[ "$SKIP_VMWARE_INSTALL" != "true" ]]; then
+    # Check modules
+    for module in vmmon vmw_vmci; do
+        if lsmod | grep -q "$module"; then
+            echo -e "      ${GREEN}✓${NC} $module kernel module loaded"
+        else
+            echo -e "      ${YELLOW}⚠${NC} $module kernel module NOT loaded (reboot may be required)"
+            ((WARNINGS++))
+        fi
+    done
 
-if lsmod | grep -q "vmw_vmci"; then
-    echo -e "      ${GREEN}✓${NC} vmw_vmci kernel module loaded"
-else
-    echo -e "      ${RED}✗${NC} vmw_vmci kernel module NOT loaded"
-    ((ERRORS++))
-fi
+    # Check VMware binary
+    VMWARE_PATHS=(/usr/bin/vmware /usr/local/bin/vmware)
+    VMWARE_FOUND=false
+    for path in "${VMWARE_PATHS[@]}"; do
+        if [[ -x "$path" ]]; then
+            echo -e "      ${GREEN}✓${NC} VMware binary found at $path"
+            VMWARE_FOUND=true
+            break
+        fi
+    done
 
-# Check services
-if systemctl is-active --quiet vmware-networks.service; then
-    echo -e "      ${GREEN}✓${NC} vmware-networks.service active"
-else
-    echo -e "      ${YELLOW}⚠${NC} vmware-networks.service inactive"
-fi
-
-if systemctl is-active --quiet vmware-usbarbitrator.service; then
-    echo -e "      ${GREEN}✓${NC} vmware-usbarbitrator.service active"
-else
-    echo -e "      ${YELLOW}⚠${NC} vmware-usbarbitrator.service inactive"
-fi
-
-# Check binary
-if command -v vmware &> /dev/null; then
-    echo -e "      ${GREEN}✓${NC} vmware binary found"
-else
-    echo -e "      ${RED}✗${NC} vmware binary NOT found"
-    ((ERRORS++))
-fi
-
-# Check hook
-if [[ -f /etc/pacman.d/hooks/90-vmware-dkms.hook ]]; then
-    if grep -q "Type = Package" /etc/pacman.d/hooks/90-vmware-dkms.hook; then
-        echo -e "      ${GREEN}✓${NC} Pacman hook properly configured"
-    else
-        echo -e "      ${RED}✗${NC} Pacman hook missing Type field"
+    if [[ "$VMWARE_FOUND" == "false" ]]; then
+        echo -e "      ${RED}✗${NC} VMware binary NOT found"
         ((ERRORS++))
     fi
+
+    # Check services
+    for service in vmware-networks vmware-usbarbitrator; do
+        if systemctl is-active --quiet ${service}.service 2>/dev/null; then
+            echo -e "      ${GREEN}✓${NC} ${service}.service active"
+        else
+            echo -e "      ${YELLOW}⚠${NC} ${service}.service inactive (may not be critical)"
+        fi
+    done
+
+    # Check DKMS
+    if command -v dkms &> /dev/null; then
+        if dkms status | grep -q vmware 2>/dev/null; then
+            echo -e "      ${GREEN}✓${NC} VMware DKMS modules registered"
+        else
+            echo -e "      ${YELLOW}⚠${NC} No VMware DKMS modules found"
+            ((WARNINGS++))
+        fi
+    fi
 else
-    echo -e "      ${RED}✗${NC} Pacman hook NOT found"
-    ((ERRORS++))
+    echo -e "      ${YELLOW}⚠${NC} VMware was not installed - skipping verification"
 fi
 
-# Completion
+# Completion message
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 
-if [[ $ERRORS -eq 0 ]]; then
+if [[ "$SKIP_VMWARE_INSTALL" == "true" ]]; then
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}Setup completed - VMware installation was skipped${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "\n${BLUE}To install VMware manually:${NC}"
+    if [[ "$DISTRO_FAMILY" == "arch" ]]; then
+        echo -e "  ${BLUE}yay -S vmware-workstation${NC}"
+        echo -e "  ${BLUE}paru -S vmware-workstation${NC}"
+    else
+        echo -e "  Download from: https://www.vmware.com/products/workstation-pro"
+        echo -e "  Run: ${BLUE}sudo bash VMware-Workstation-*.bundle${NC}"
+    fi
+    echo -e "\n${BLUE}Then run this script again to complete setup${NC}"
+elif [[ $ERRORS -eq 0 ]]; then
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${GREEN}VMware Workstation setup complete - No errors!${NC}"
+    echo -e "${GREEN}VMware Workstation setup complete!${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    
+    if [[ $WARNINGS -gt 0 ]]; then
+        echo -e "\n${YELLOW}Note: ${WARNINGS} warning(s) detected. Reboot may be required.${NC}"
+    fi
+    
     echo -e "\n${BLUE}Launch VMware:${NC} vmware"
-    echo -e "${BLUE}First run:${NC} You may need to accept the EULA and enter a license key"
-    echo -e "${BLUE}Auto-rebuild:${NC} Kernel modules will rebuild automatically on kernel updates"
+    echo -e "${BLUE}First run:${NC} Accept EULA and enter license key"
+    echo -e "${BLUE}Auto-rebuild:${NC} Modules will rebuild on kernel updates"
+    
+    if [[ "$DISTRO_FAMILY" != "arch" ]]; then
+        echo -e "\n${YELLOW}Recommended:${NC} Reboot your system for all changes to take effect"
+    fi
 else
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}VMware Workstation setup completed with ${ERRORS} error(s)${NC}"
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${RED}Setup completed with ${ERRORS} error(s) and ${WARNINGS} warning(s)${NC}"
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "\n${YELLOW}Troubleshooting:${NC}"
-    echo -e "  1. Check DKMS status: ${BLUE}sudo dkms status${NC}"
-    echo -e "  2. Manually load modules: ${BLUE}sudo modprobe -a vmw_vmci vmmon${NC}"
-    echo -e "  3. Check system logs: ${BLUE}journalctl -xe${NC}"
+    echo -e "  1. Check DKMS: ${BLUE}sudo dkms status${NC}"
+    echo -e "  2. Load modules: ${BLUE}sudo modprobe vmmon vmw_vmci${NC}"
+    echo -e "  3. Check logs: ${BLUE}journalctl -xe | grep vmware${NC}"
+    echo -e "  4. Rebuild modules: ${BLUE}sudo dkms autoinstall${NC}"
 fi
 
 echo ""
