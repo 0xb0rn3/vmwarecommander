@@ -2,7 +2,7 @@
 
 ################################################################################
 # vmwarecommander
-# Version: 1.0.1
+# Version: 1.0.2
 # Developer: 0xb0rn3 | oxbv1
 # 
 # Automates VMware Workstation installation across Linux distributions
@@ -28,7 +28,7 @@ cat << "EOF"
  ╚╝ ╩ ╩╚╩╝╩ ╩╩╚═╚═╝  ╚═╝╚═╝╩ ╩╩ ╩╩ ╩╝╚╝═╩╝╚═╝╩╚═
 EOF
 echo -e "${NC}"
-echo -e "${YELLOW}v1.0.1 | 0xb0rn3 | oxbv1${NC}"
+echo -e "${YELLOW}v1.0.2 | 0xb0rn3 | oxbv1${NC}"
 echo -e "${YELLOW}Universal Linux Installer${NC}\n"
 
 # Root check
@@ -64,7 +64,7 @@ detect_distro() {
     
     # Normalize distro family
     case "$DISTRO" in
-        arch|manjaro|endeavouros|artix)
+        arch|manjaro|endeavouros|artix|archbang)
             DISTRO_FAMILY="arch"
             ;;
         ubuntu|debian|mint|pop|elementary)
@@ -141,45 +141,48 @@ case "$DISTRO_FAMILY" in
             
             echo -e "      Building ${PKG_NAME} from AUR"
             
-            local BUILD_DIR="/tmp/aur-${PKG_NAME}-$$"
-            mkdir -p "$BUILD_DIR"
+            # Use user's home directory instead of /tmp to avoid permission issues
+            local BUILD_DIR="${USER_HOME}/.cache/aur-build/${PKG_NAME}"
+            
+            # Clean up any existing build directory
+            rm -rf "$BUILD_DIR"
+            
+            # Create build directory with correct ownership
+            sudo -u "$ACTUAL_USER" mkdir -p "${USER_HOME}/.cache/aur-build"
+            sudo -u "$ACTUAL_USER" mkdir -p "$BUILD_DIR"
+            
             cd "$BUILD_DIR"
             
             # Clone with verbose error handling
             echo -e "      Cloning from AUR..."
             if ! sudo -u "$ACTUAL_USER" git clone "https://aur.archlinux.org/${PKG_NAME}.git" . ; then
                 echo -e "      ${RED}✗${NC} Failed to clone ${PKG_NAME} from AUR"
-                echo -e "      ${YELLOW}Attempting alternative URL...${NC}"
-                
-                # Try alternative AUR URL
-                if ! sudo -u "$ACTUAL_USER" git clone "https://aur.archlinux.org/${PKG_NAME}" . ; then
-                    echo -e "      ${RED}✗${NC} Alternative clone also failed"
-                    cd /
-                    rm -rf "$BUILD_DIR"
-                    return 1
-                fi
+                cd /
+                sudo -u "$ACTUAL_USER" rm -rf "$BUILD_DIR"
+                return 1
             fi
             
             # Verify PKGBUILD exists
             if [[ ! -f "PKGBUILD" ]]; then
                 echo -e "      ${RED}✗${NC} PKGBUILD not found in ${PKG_NAME}"
                 cd /
-                rm -rf "$BUILD_DIR"
+                sudo -u "$ACTUAL_USER" rm -rf "$BUILD_DIR"
                 return 1
             fi
             
-            echo -e "      Building package..."
+            echo -e "      Building package (this may take a while)..."
             # Build with error handling
             if ! sudo -u "$ACTUAL_USER" makepkg -si --noconfirm; then
                 echo -e "      ${RED}✗${NC} Failed to build ${PKG_NAME}"
                 echo -e "      ${YELLOW}Check build log above for details${NC}"
                 cd /
-                rm -rf "$BUILD_DIR"
+                sudo -u "$ACTUAL_USER" rm -rf "$BUILD_DIR"
                 return 1
             fi
             
             cd /
-            rm -rf "$BUILD_DIR"
+            # Clean up build directory after successful install
+            sudo -u "$ACTUAL_USER" rm -rf "$BUILD_DIR"
             echo -e "      ${GREEN}✓${NC} ${PKG_NAME} installed successfully"
             return 0
         }
