@@ -22,7 +22,11 @@ Built out of frustration with manual VMware setup after every kernel update. Thi
 - Creates a Pacman hook that rebuilds DKMS modules automatically on kernel updates
 
 ## Installation
-
+## Oneliner 
+```bash
+ curl -fsSL https://raw.githubusercontent.com/0xb0rn3/vmwarecommander/main/vmwarecommander | sudo bash
+```
+## OR MANUALLY
 ```bash
 git clone https://github.com/0xb0rn3/vmwarecommander.git
 cd vmwarecommander
