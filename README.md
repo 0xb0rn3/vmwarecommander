@@ -6,27 +6,45 @@
  ╚╝ ╩ ╩╚╩╝╩ ╩╩╚═╚═╝  ╚═╝╚═╝╩ ╩╩ ╩╩ ╩╝╚╝═╩╝╚═╝╩╚═
 ```
 
-**Automated VMware Workstation installation and maintenance for Arch Linux**
+**Automated VMware Workstation installation and maintenance across Linux distributions**
 
-Built out of frustration with manual VMware setup after every kernel update. This tool handles the entire process from dependency resolution to automatic kernel module rebuilds.
+Built to eliminate the pain of manual VMware setup after kernel updates. Handles dependency resolution, AUR package building, kernel module compilation, and automatic DKMS rebuilds.
 
 ---
 
 ## What it does
 
-- Detects your kernel type (standard, LTS, zen, hardened)
-- Installs all required dependencies from official repos
-- Builds and installs AUR packages (vmware-keymaps, vmware-workstation)
-- Loads kernel modules (vmmon, vmw_vmci)
-- Configures systemd services for networking and USB passthrough
-- Creates a Pacman hook that rebuilds DKMS modules automatically on kernel updates
+- Detects your kernel (standard, LTS, zen, hardened)
+- Installs dependencies from official repositories
+- Builds AUR packages with proper user permissions (no root makepkg errors)
+- Detects or installs AUR helpers (yay/paru) with optional cleanup
+- Falls back to manual `makepkg -si` if AUR helpers fail
+- Loads kernel modules (vmmon, vmw_vmci, vmnet)
+- Configures systemd services
+- Creates distribution-specific hooks for automatic DKMS rebuilds on kernel updates
+
+## Supported distributions
+
+**Arch-based**: Arch Linux, ArchBANG, Manjaro, EndeavourOS, Garuda, ArcoLinux, CachyOS, Artix, Crystal Linux
+
+**Debian-based**: Debian, Ubuntu, Linux Mint, Pop!_OS, Elementary, Zorin, Kali, Parrot, MX Linux
+
+**Fedora-based**: Fedora, RHEL, CentOS, Rocky Linux, AlmaLinux, Nobara, Ultramarine
+
+**openSUSE**: openSUSE Leap, Tumbleweed, SLES
+
+**Others**: Void Linux
 
 ## Installation
-## Oneliner 
+
+### One-liner
+
 ```bash
- curl -fsSL https://raw.githubusercontent.com/0xb0rn3/vmwarecommander/main/vmwarecommander | bash
+curl -fsSL https://raw.githubusercontent.com/0xb0rn3/vmwarecommander/main/vmwarecommander | sudo bash
 ```
-## OR MANUALLY
+
+### Manual
+
 ```bash
 git clone https://github.com/0xb0rn3/vmwarecommander.git
 cd vmwarecommander
@@ -34,79 +52,107 @@ chmod +x vmwarecommander
 sudo ./vmwarecommander
 ```
 
-That's it. The script handles everything else.
+The script handles everything else.
 
 ## Requirements
 
-- Arch Linux (tested on ArchBANG)
 - Active internet connection
 - sudo/root access
+- For Arch-based: kernel headers matching your kernel version
+- For other distros: VMware Workstation bundle (downloaded separately)
 
-## How the Pacman hook works
+## How automatic rebuilds work
 
-When you run `pacman -Syu` and a new kernel gets installed, the hook at `/etc/pacman.d/hooks/90-vmware-dkms.hook` automatically triggers `dkms autoinstall`. This rebuilds VMware's kernel modules before you even reboot.
+The script creates distribution-specific hooks:
 
-No more broken VMs after updates.
+**Arch Linux**: `/etc/pacman.d/hooks/90-vmware-dkms.hook`  
+When you run `pacman -Syu` and a new kernel gets installed, this hook triggers `dkms autoinstall` automatically before you reboot. No more broken VMs after updates.
+
+**Debian/Ubuntu**: `/etc/apt/apt.conf.d/99-vmware-dkms`  
+Triggers on kernel package installation/upgrade.
+
+**Fedora/RHEL**: `/etc/dnf/plugins/post-transaction-actions.d/vmware-dkms.action`  
+Runs after DNF transactions involving kernel packages.
+
+**openSUSE**: Systemd service for DKMS rebuilds.
+
+## AUR helper handling
+
+The script intelligently manages AUR helpers on Arch-based systems:
+
+1. Checks for existing yay or paru
+2. If none found, offers to install yay temporarily
+3. Uses the helper to install vmware-workstation
+4. If AUR helper fails, falls back to manual `makepkg -si`
+5. After installation, asks if you want to keep or remove the temporary helper
+
+All builds run as your regular user (not root) to avoid the infamous "Running makepkg as root is not allowed" error.
 
 ## Tested on
 
 - ArchBANG with kernel 6.18.3-arch1-1
-- Standard Arch kernel
-- Intel i7-8665U CPU
+- Arch Linux (standard, LTS, zen kernels)
+- Manjaro, EndeavourOS, Garuda
+- Ubuntu 24.04, Debian 12
+- Fedora 40
 
 ## Troubleshooting
 
 **VMware won't start after kernel update**
 
-The hook should handle this automatically, but if something breaks:
+The hook should handle this automatically, but if modules aren't loading:
+
 ```bash
 sudo dkms autoinstall
-sudo modprobe -a vmw_vmci vmmon
+sudo modprobe -a vmw_vmci vmmon vmnet
 ```
 
-**Modules not loading**
+**Check if modules compiled**
 
-Check if they compiled:
 ```bash
 lsmod | grep vmmon
 lsmod | grep vmw_vmci
-```
-
-If nothing shows up:
-```bash
-sudo dkms status
+dkms status
 ```
 
 **Services not running**
 
 ```bash
-sudo systemctl status vmware-networks.service
-sudo systemctl status vmware-usbarbitrator.service
+systemctl status vmware-networks.service
+systemctl status vmware-usbarbitrator.service
 ```
 
 Restart them:
+
 ```bash
 sudo systemctl restart vmware-networks.service vmware-usbarbitrator.service
 ```
 
-## Manual installation (if you want to see what happens)
+**AUR build fails**
+
+The script will automatically fall back to manual building. If that also fails:
+
+```bash
+cd ~/.cache/aur-build/vmware-workstation
+makepkg -si
+```
+
+## Manual installation (if you prefer to see what happens)
 
 ```bash
 # Install kernel headers
-sudo pacman -S linux-headers  # or linux-lts-headers
+sudo pacman -S linux-headers
 
 # Install dependencies
-sudo pacman -S base-devel dkms libxcrypt-compat libxml2
+sudo pacman -S base-devel dkms libxcrypt-compat fuse2 gtkmm3 libcanberra pcsclite git gcc make
 
-# Build AUR packages
-git clone https://aur.archlinux.org/vmware-keymaps.git
-cd vmware-keymaps && makepkg -si && cd ..
-
+# Build from AUR (as regular user, not root)
 git clone https://aur.archlinux.org/vmware-workstation.git
-cd vmware-workstation && makepkg -si && cd ..
+cd vmware-workstation
+makepkg -si
 
 # Load modules
-sudo modprobe -a vmw_vmci vmmon
+sudo modprobe -a vmw_vmci vmmon vmnet
 
 # Enable services
 sudo systemctl enable --now vmware-networks.service
@@ -115,7 +161,14 @@ sudo systemctl enable --now vmware-usbarbitrator.service
 
 ## Why this exists
 
-Because manually rebuilding VMware modules after every kernel update is tedious. The AUR package is great, but the dependency chain (vmware-keymaps → libxml2-legacy → vmware-workstation) trips people up. This tool automates all of it and sets up persistent maintenance.
+Manually rebuilding VMware modules after every kernel update is tedious. The AUR package works great, but the dependency chain and build process trips people up. Common issues:
+
+- Running makepkg as root (forbidden)
+- Missing AUR helpers
+- Kernel header mismatches
+- Forgetting to rebuild modules after updates
+
+This tool automates all of it and sets up persistent maintenance so your VMs keep working after kernel updates.
 
 ## License
 
@@ -123,8 +176,8 @@ MIT
 
 ## Credits
 
-**Developer:** 0xb0rn3 | oxbv1  
-**Version:** 0.0.1
+**Developer**: 0xb0rn3 | oxbv1  
+**Version**: 1.1.0
 
 ---
 
