@@ -116,7 +116,7 @@ echo -e "\n${BLUE}[3/8]${NC} Installing dependencies for $DISTRO_FAMILY"
 case "$DISTRO_FAMILY" in
     arch)
         echo -e "      Installing Arch Linux dependencies..."
-        pacman -Syu --needed --noconfirm \
+        yay -Syu --needed --noconfirm \
             base-devel \
             linux-headers \
             dkms \
