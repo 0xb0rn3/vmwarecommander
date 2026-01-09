@@ -128,8 +128,8 @@ case "$DISTRO_FAMILY" in
             libcanberra \
             pcsclite \
             gcc \
-            make
-        
+            make \
+            vmware-workstation
         # Build AUR packages
         build_aur_package() {
             local PKG_NAME=$1
