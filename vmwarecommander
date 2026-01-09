@@ -32,10 +32,10 @@ echo -e "${YELLOW}v1.0.2 | 0xb0rn3 | oxbv1${NC}"
 echo -e "${YELLOW}Universal Linux Installer${NC}\n"
 
 # Root check
-if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}[!] Run this script with sudo${NC}"
-   exit 1
-fi
+#if [[ $EUID -ne 0 ]]; then
+#   echo -e "${RED}[!] Run this script with sudo${NC}"
+#   exit 1
+#fi
 
 # Detect the actual user (not root)
 ACTUAL_USER=${SUDO_USER:-$USER}
