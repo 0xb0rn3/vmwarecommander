@@ -67,14 +67,6 @@ The script automatically checks:
 
 ## Installation
 
-### One-liner
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/0xb0rn3/vmwarecommander/main/vmwarecommander | sudo bash
-```
-
-### Manual
-
 ```bash
 git clone https://github.com/0xb0rn3/vmwarecommander.git
 cd vmwarecommander
