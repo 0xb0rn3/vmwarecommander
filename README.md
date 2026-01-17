@@ -421,5 +421,3 @@ Found a bug? Have a suggestion?
 -----
 
 If this saved you time debugging VMware after a kernel update, drop a ⭐
-
-Built for security researchers, pentesters, and anyone tired of manually fixing VMware after `pacman -Syu`
