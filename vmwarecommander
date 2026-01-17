@@ -252,7 +252,7 @@ case "$DISTRO_FAMILY" in
             success "Found AUR helper: $AUR_HELPER" >&3
             
             {
-                sudo -u "$ACTUAL_USER" $AUR_HELPER -S --needed --noconfirm vmware-workstation
+                sudo -u "$ACTUAL_USER" $AUR_HELPER -S --needed --noconfirm vmware-keymaps vmware-workstation
             } &
             spinner $! "Building vmware-workstation with $AUR_HELPER" >&3
             wait $!
