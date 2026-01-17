@@ -19,8 +19,8 @@ cat << "EOF"
  ╚╝ ╩ ╩╚╩╝╩ ╩╩╚═╚═╝  ╚═╝╚═╝╩ ╩╩ ╩╩ ╩╝╚╝═╩╝╚═╝╩╚═
 EOF
 echo -e "${NC}"
-echo -e "${CYAN}v2.0.0 | 0xb0rn3 | oxbv1${NC}"
-echo -e "${GRAY}Arch Linux VMware Installer${NC}\n"
+echo -e "${CYAN}v2.1.0 | 0xb0rn3 | oxbv1${NC}"
+echo -e "${GRAY}Arch Linux VMware Complete Installer${NC}\n"
 
 if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}✗ Run with sudo${NC}"
@@ -42,7 +42,7 @@ spinner() {
 }
 
 step() {
-    echo -e "${BLUE}[$1/6]${NC} $2"
+    echo -e "${BLUE}[$1/8]${NC} $2"
 }
 
 success() {
@@ -55,6 +55,10 @@ fail() {
 
 warn() {
     echo -e "      ${YELLOW}⚠${NC} $1"
+}
+
+info() {
+    echo -e "      ${CYAN}ℹ${NC} $1"
 }
 
 exec 3>&1 4>&2
@@ -93,130 +97,325 @@ success "Distribution: Arch Linux" >&3
 KERNEL_VER=$(uname -r)
 success "Kernel: $KERNEL_VER" >&3
 
-step "1" "Checking for existing VMware installation" >&3
-if command -v vmware &> /dev/null; then
-    warn "VMware already installed" >&3
-    read -p "$(echo -e "      ${YELLOW}Continue anyway? (y/N):${NC} ")" -n 1 -r >&3
-    echo >&3
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exec 1>&3 2>&4
-        exit 0
+detect_vmware_status() {
+    local status=""
+    local issues=0
+    
+    if command -v vmware &> /dev/null; then
+        status="${status}binary_ok "
+    else
+        ((issues++))
     fi
-else
-    success "No existing installation" >&3
-fi
-
-step "2" "Installing base dependencies" >&3
-{
-    pacman -Sy --needed --noconfirm \
-        base-devel \
-        linux-headers \
-        dkms \
-        git \
-        fuse2 \
-        gtkmm3 \
-        libcanberra \
-        pcsclite \
-        gcc \
-        make
-} &
-spinner $! "Installing base dependencies" >&3
-wait $!
-
-if [ $? -eq 0 ]; then
-    success "Base dependencies installed" >&3
-else
-    fail "Failed to install dependencies" >&3
-    exec 1>&3 2>&4
-    exit 1
-fi
-
-detect_aur_helper() {
-    for helper in yay paru; do
-        if sudo -u "$ACTUAL_USER" command -v $helper &> /dev/null; then
-            AUR_HELPER=$helper
-            return 0
-        fi
-    done
-    return 1
+    
+    if pacman -Qi vmware-workstation &> /dev/null 2>&1; then
+        status="${status}package_ok "
+    else
+        ((issues++))
+    fi
+    
+    if lsmod | grep -q "^vmmon" 2>/dev/null; then
+        status="${status}modules_ok "
+    else
+        ((issues++))
+    fi
+    
+    if systemctl is-active --quiet vmware-networks.service 2>/dev/null; then
+        status="${status}services_ok "
+    else
+        ((issues++))
+    fi
+    
+    echo "$status|$issues"
 }
 
-step "3" "Setting up AUR helper" >&3
-if detect_aur_helper; then
-    success "Found AUR helper: $AUR_HELPER" >&3
-    TEMP_AUR_HELPER=false
+step "1" "Detecting VMware installation" >&3
+
+VMWARE_STATUS=$(detect_vmware_status)
+STATUS_FLAGS="${VMWARE_STATUS%|*}"
+ISSUE_COUNT="${VMWARE_STATUS#*|}"
+
+if [[ -z "$STATUS_FLAGS" ]]; then
+    success "No existing VMware installation detected" >&3
+    INSTALL_MODE="fresh"
 else
-    warn "No AUR helper found, installing yay" >&3
+    warn "VMware installation detected" >&3
+    
+    echo "" >&3
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&3
+    echo -e "${BLUE}[*]${NC} Current VMware Status" >&3
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&3
+    
+    if [[ "$STATUS_FLAGS" =~ "binary_ok" ]]; then
+        VMWARE_VERSION=$(vmware --version 2>/dev/null | head -n1 || echo "Unknown")
+        success "Binary: $VMWARE_VERSION" >&3
+    else
+        fail "Binary: Not found" >&3
+    fi
+    
+    if [[ "$STATUS_FLAGS" =~ "package_ok" ]]; then
+        PKG_VERSION=$(pacman -Qi vmware-workstation 2>/dev/null | grep "^Version" | awk '{print $3}')
+        success "Package: vmware-workstation $PKG_VERSION" >&3
+    else
+        fail "Package: Not installed" >&3
+    fi
+    
+    if [[ "$STATUS_FLAGS" =~ "modules_ok" ]]; then
+        LOADED_MODULES=$(lsmod | grep "^vm" | awk '{print $1}' | tr '\n' ' ')
+        success "Modules: $LOADED_MODULES" >&3
+    else
+        fail "Modules: Not loaded" >&3
+    fi
+    
+    if [[ "$STATUS_FLAGS" =~ "services_ok" ]]; then
+        ACTIVE_SERVICES=$(systemctl list-units --type=service --state=active | grep vmware | awk '{print $1}' | tr '\n' ' ')
+        success "Services: $ACTIVE_SERVICES" >&3
+    else
+        fail "Services: Not running" >&3
+    fi
+    
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&3
+    
+    if [[ $ISSUE_COUNT -eq 0 ]]; then
+        info "VMware appears to be fully functional" >&3
+    else
+        warn "Found $ISSUE_COUNT issue(s) with current installation" >&3
+    fi
+    
+    echo "" >&3
+    echo -e "${YELLOW}Choose installation mode:${NC}" >&3
+    echo -e "  ${CYAN}[1]${NC} Fresh Install (remove and reinstall everything)" >&3
+    echo -e "  ${CYAN}[2]${NC} Repair (fix modules and services, keep config)" >&3
+    echo -e "  ${CYAN}[3]${NC} Skip (exit without changes)" >&3
+    echo "" >&3
+    
+    while true; do
+        read -p "$(echo -e "${YELLOW}Select option [1-3]:${NC} ")" -n 1 -r choice >&3
+        echo "" >&3
+        case $choice in
+            1)
+                INSTALL_MODE="reinstall"
+                info "Starting fresh installation..." >&3
+                break
+                ;;
+            2)
+                INSTALL_MODE="repair"
+                info "Starting repair..." >&3
+                break
+                ;;
+            3)
+                info "Installation cancelled by user" >&3
+                exec 1>&3 2>&4
+                exit 0
+                ;;
+            *)
+                warn "Invalid option, please choose 1, 2, or 3" >&3
+                ;;
+        esac
+    done
+fi
+
+if [[ "$INSTALL_MODE" == "reinstall" ]]; then
+    step "2" "Removing existing VMware installation" >&3
+    
+    info "Stopping VMware services..." >&3
+    {
+        for service in vmware-networks vmware-usbarbitrator vmware-hostd; do
+            systemctl stop ${service}.service 2>/dev/null || true
+            systemctl disable ${service}.service 2>/dev/null || true
+        done
+    } &>> "$LOG_FILE"
+    
+    info "Unloading kernel modules..." >&3
+    {
+        for module in vmnet vmmon vmw_vmci; do
+            rmmod $module 2>/dev/null || true
+        done
+    } &>> "$LOG_FILE"
     
     {
-        BUILD_DIR="${USER_HOME}/.cache/yay-install"
-        sudo -u "$ACTUAL_USER" rm -rf "$BUILD_DIR"
-        sudo -u "$ACTUAL_USER" mkdir -p "$BUILD_DIR"
-        cd "$BUILD_DIR"
+        if pacman -Qi vmware-workstation &> /dev/null 2>&1; then
+            pacman -Rns --noconfirm vmware-workstation vmware-keymaps 2>/dev/null || true
+        fi
         
-        sudo -u "$ACTUAL_USER" git clone https://aur.archlinux.org/yay.git .
-        sudo -u "$ACTUAL_USER" makepkg -si --noconfirm
-        
-        cd /
-        sudo -u "$ACTUAL_USER" rm -rf "$BUILD_DIR"
+        rm -rf /etc/vmware 2>/dev/null || true
+        rm -rf /usr/lib/vmware 2>/dev/null || true
+        rm -rf /var/log/vmware* 2>/dev/null || true
+        rm -rf "${USER_HOME}/.vmware" 2>/dev/null || true
+        rm -f /etc/modules-load.d/vmware.conf 2>/dev/null || true
+        rm -f /etc/init.d/vmware 2>/dev/null || true
     } &
     
-    spinner $! "Building yay from AUR" >&3
+    spinner $! "Removing existing installation" >&3
     wait $!
+    success "Previous installation removed" >&3
     
+elif [[ "$INSTALL_MODE" == "repair" ]]; then
+    step "2" "Repairing VMware installation" >&3
+    
+    info "Restarting services..." >&3
+    {
+        systemctl daemon-reload
+        for service in vmware-networks vmware-usbarbitrator vmware-hostd; do
+            if systemctl list-unit-files | grep -q "${service}.service"; then
+                systemctl restart ${service}.service 2>/dev/null || true
+            fi
+        done
+    } &>> "$LOG_FILE"
+    
+    info "Reloading kernel modules..." >&3
+    {
+        for module in vmnet vmmon vmw_vmci; do
+            rmmod $module 2>/dev/null || true
+            modprobe $module 2>/dev/null || true
+        done
+    } &>> "$LOG_FILE"
+    
+    if command -v vmware-modconfig &> /dev/null; then
+        {
+            vmware-modconfig --console --install-all
+        } &
+        spinner $! "Rebuilding kernel modules" >&3
+        wait $!
+    fi
+    
+    success "Repair operations completed" >&3
+    SKIP_INSTALL=true
+else
+    step "2" "Preparing for fresh installation" >&3
+    success "No previous installation to remove" >&3
+fi
+
+if [[ "$SKIP_INSTALL" != "true" ]]; then
+    step "3" "Installing comprehensive dependencies" >&3
+    {
+        pacman -Sy --needed --noconfirm \
+            base-devel \
+            linux-headers \
+            dkms \
+            git \
+            fuse2 \
+            gtkmm3 \
+            libcanberra \
+            pcsclite \
+            gcc \
+            make \
+            net-tools \
+            inetutils \
+            libxcrypt-compat \
+            ncurses5-compat-libs \
+            usbutils \
+            wget \
+            unzip
+    } &
+    spinner $! "Installing system dependencies" >&3
+    wait $!
+
     if [ $? -eq 0 ]; then
-        AUR_HELPER="yay"
-        TEMP_AUR_HELPER=true
-        success "yay installed" >&3
+        success "System dependencies installed" >&3
     else
-        fail "Failed to install yay" >&3
+        fail "Failed to install dependencies" >&3
         exec 1>&3 2>&4
         exit 1
     fi
-fi
 
-step "4" "Installing VMware packages from AUR" >&3
+    detect_aur_helper() {
+        for helper in yay paru; do
+            if sudo -u "$ACTUAL_USER" command -v $helper &> /dev/null; then
+                AUR_HELPER=$helper
+                return 0
+            fi
+        done
+        return 1
+    }
 
-{
-    sudo -u "$ACTUAL_USER" $AUR_HELPER -S --needed --noconfirm --removemake vmware-keymaps
-} &
-spinner $! "Building vmware-keymaps" >&3
-wait $!
-
-if [ $? -eq 0 ]; then
-    success "vmware-keymaps installed" >&3
-else
-    fail "Failed to install vmware-keymaps" >&3
-    exec 1>&3 2>&4
-    exit 1
-fi
-
-{
-    sudo -u "$ACTUAL_USER" $AUR_HELPER -S --needed --noconfirm --removemake vmware-workstation
-} &
-spinner $! "Building vmware-workstation (this may take a while)" >&3
-wait $!
-
-if [ $? -eq 0 ]; then
-    success "vmware-workstation installed" >&3
-else
-    fail "Failed to install vmware-workstation" >&3
-    exec 1>&3 2>&4
-    exit 1
-fi
-
-if [[ "$TEMP_AUR_HELPER" == "true" ]]; then
-    read -p "$(echo -e "      ${YELLOW}Keep yay for future use? (Y/n):${NC} ")" -n 1 -r >&3
-    echo >&3
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        pacman -Rns --noconfirm yay &>> "$LOG_FILE"
-        success "yay removed" >&3
+    step "4" "Setting up AUR helper" >&3
+    if detect_aur_helper; then
+        success "Found AUR helper: $AUR_HELPER" >&3
+        TEMP_AUR_HELPER=false
     else
-        success "yay kept for future use" >&3
+        warn "No AUR helper found, installing yay" >&3
+        
+        {
+            BUILD_DIR="${USER_HOME}/.cache/yay-install"
+            sudo -u "$ACTUAL_USER" rm -rf "$BUILD_DIR"
+            sudo -u "$ACTUAL_USER" mkdir -p "$BUILD_DIR"
+            cd "$BUILD_DIR"
+            
+            sudo -u "$ACTUAL_USER" git clone https://aur.archlinux.org/yay.git .
+            sudo -u "$ACTUAL_USER" makepkg -si --noconfirm
+            
+            cd /
+            sudo -u "$ACTUAL_USER" rm -rf "$BUILD_DIR"
+        } &
+        
+        spinner $! "Building yay from AUR" >&3
+        wait $!
+        
+        if [ $? -eq 0 ]; then
+            AUR_HELPER="yay"
+            TEMP_AUR_HELPER=true
+            success "yay installed" >&3
+        else
+            fail "Failed to install yay" >&3
+            exec 1>&3 2>&4
+            exit 1
+        fi
     fi
+
+    step "5" "Installing VMware AUR packages" >&3
+
+    {
+        sudo -u "$ACTUAL_USER" $AUR_HELPER -S --needed --noconfirm --removemake vmware-keymaps
+    } &
+    spinner $! "Building vmware-keymaps" >&3
+    wait $!
+
+    if [ $? -eq 0 ]; then
+        success "vmware-keymaps installed" >&3
+    else
+        fail "Failed to install vmware-keymaps" >&3
+        exec 1>&3 2>&4
+        exit 1
+    fi
+
+    {
+        sudo -u "$ACTUAL_USER" $AUR_HELPER -S --needed --noconfirm --removemake vmware-workstation
+    } &
+    spinner $! "Building vmware-workstation (this may take several minutes)" >&3
+    wait $!
+
+    if [ $? -eq 0 ]; then
+        success "vmware-workstation installed" >&3
+    else
+        fail "Failed to install vmware-workstation" >&3
+        exec 1>&3 2>&4
+        exit 1
+    fi
+
+    if [[ "$TEMP_AUR_HELPER" == "true" ]]; then
+        read -p "$(echo -e "      ${YELLOW}Keep yay for future use? (Y/n):${NC} ")" -n 1 -r >&3
+        echo >&3
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            pacman -Rns --noconfirm yay &>> "$LOG_FILE"
+            success "yay removed" >&3
+        else
+            success "yay kept for future use" >&3
+        fi
+    fi
+else
+    step "3" "Skipping dependency installation (repair mode)" >&3
+    step "4" "Skipping AUR helper setup (repair mode)" >&3
+    step "5" "Skipping package installation (repair mode)" >&3
 fi
 
-step "5" "Configuring VMware services" >&3
+step "6" "Configuring user permissions" >&3
+{
+    groupadd -f vmware
+    usermod -aG vmware "$ACTUAL_USER"
+} &>> "$LOG_FILE"
+success "User '$ACTUAL_USER' added to vmware group" >&3
+
+step "7" "Configuring VMware services and network" >&3
 
 {
     systemctl daemon-reload
@@ -227,12 +426,40 @@ step "5" "Configuring VMware services" >&3
             systemctl start ${service}.service
         fi
     done
+    
+    if [[ -f /etc/vmware/networking ]]; then
+        if ! grep -q "answer VNET_1_DHCP yes" /etc/vmware/networking 2>/dev/null; then
+            cat >> /etc/vmware/networking << 'NETEOF'
+answer VNET_1_DHCP yes
+answer VNET_1_DHCP_CFG_HASH 1234567890ABCDEF1234567890ABCDEF
+answer VNET_1_HOSTONLY_NETMASK 255.255.255.0
+answer VNET_1_HOSTONLY_SUBNET 192.168.100.0
+answer VNET_1_VIRTUAL_ADAPTER yes
+answer VNET_8_DHCP yes
+answer VNET_8_DHCP_CFG_HASH 1234567890ABCDEF1234567890ABCDEF
+answer VNET_8_HOSTONLY_NETMASK 255.255.255.0
+answer VNET_8_HOSTONLY_SUBNET 192.168.200.0
+answer VNET_8_NAT yes
+answer VNET_8_VIRTUAL_ADAPTER yes
+NETEOF
+        fi
+    fi
+    
+    if command -v vmware-networks &> /dev/null; then
+        vmware-networks --start
+    fi
 } &
-spinner $! "Enabling VMware services" >&3
+spinner $! "Configuring VMware services and networking" >&3
 wait $!
 success "VMware services configured" >&3
 
-step "6" "Loading VMware kernel modules" >&3
+step "8" "Setting up kernel modules and auto-rebuild" >&3
+
+cat > /etc/modules-load.d/vmware.conf << 'MODEOF'
+vmw_vmci
+vmmon
+vmnet
+MODEOF
 
 MODULES_LOADED=0
 for module in vmw_vmci vmmon vmnet; do
@@ -245,6 +472,20 @@ if [[ $MODULES_LOADED -gt 0 ]]; then
     success "Loaded $MODULES_LOADED kernel modules" >&3
 else
     warn "Modules will load after reboot" >&3
+fi
+
+if command -v vmware-modconfig &> /dev/null; then
+    {
+        vmware-modconfig --console --install-all
+    } &
+    spinner $! "Configuring VMware kernel modules" >&3
+    wait $!
+    
+    if [ $? -eq 0 ]; then
+        success "VMware modules configured" >&3
+    else
+        warn "Module configuration had issues (may work after reboot)" >&3
+    fi
 fi
 
 mkdir -p /etc/pacman.d/hooks
@@ -263,10 +504,43 @@ Target = vmware-workstation
 [Action]
 Description = Rebuilding VMware kernel modules
 When = PostTransaction
-Exec = /usr/bin/dkms autoinstall
+Exec = /usr/bin/vmware-modconfig --console --install-all
 HOOKEOF
 
 success "Auto-rebuild hook installed" >&3
+
+if [[ -d /etc/init.d ]] && [[ ! -f /etc/init.d/vmware ]]; then
+    {
+        cat > /etc/init.d/vmware << 'INITEOF'
+#!/bin/bash
+### BEGIN INIT INFO
+# Provides: vmware
+# Required-Start: $network $syslog
+# Required-Stop:
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
+# Description: VMware Workstation
+### END INIT INFO
+
+case "$1" in
+    start)
+        /usr/bin/vmware-networks --start
+        /usr/lib/vmware/bin/vmware-usbarbitrator
+        ;;
+    stop)
+        /usr/bin/vmware-networks --stop
+        killall vmware-usbarbitrator
+        ;;
+    restart)
+        $0 stop
+        $0 start
+        ;;
+esac
+INITEOF
+        chmod +x /etc/init.d/vmware
+    } &>> "$LOG_FILE"
+    success "Init script created" >&3
+fi
 
 exec 1>&3 2>&4
 
@@ -282,16 +556,23 @@ for module in vmmon vmw_vmci vmnet; do
     if lsmod | grep -q "^$module" 2>/dev/null; then
         success "$module kernel module loaded"
     else
-        warn "$module not loaded (reboot may be required)"
+        warn "$module not loaded (reboot required)"
         ((WARNINGS++))
     fi
 done
 
 if command -v vmware &> /dev/null; then
-    success "VMware binary: $(which vmware)"
+    VMWARE_VER=$(vmware --version 2>/dev/null | head -n1)
+    success "VMware binary: $VMWARE_VER"
 else
     fail "VMware binary not found"
     ((ERRORS++))
+fi
+
+if command -v vmrun &> /dev/null; then
+    success "vmrun utility installed"
+else
+    warn "vmrun utility not found"
 fi
 
 if pacman -Qi vmware-keymaps &> /dev/null; then
@@ -302,7 +583,8 @@ else
 fi
 
 if pacman -Qi vmware-workstation &> /dev/null; then
-    success "vmware-workstation installed"
+    PKG_VER=$(pacman -Qi vmware-workstation 2>/dev/null | grep "^Version" | awk '{print $3}')
+    success "vmware-workstation $PKG_VER installed"
 else
     fail "vmware-workstation not installed"
     ((ERRORS++))
@@ -319,22 +601,59 @@ for service in vmware-networks vmware-usbarbitrator; do
     fi
 done
 
+if id -nG "$ACTUAL_USER" | grep -qw "vmware"; then
+    success "User in vmware group"
+else
+    warn "User not in vmware group (re-login required)"
+    ((WARNINGS++))
+fi
+
+if [[ -f /etc/vmware/networking ]]; then
+    success "VMware networking configured"
+else
+    warn "VMware networking config not found"
+fi
+
+if [[ -f /etc/modules-load.d/vmware.conf ]]; then
+    success "Module auto-load configured"
+else
+    warn "Module auto-load not configured"
+fi
+
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 if [[ $ERRORS -eq 0 ]]; then
     echo -e "\n${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${GREEN}✓ VMware Workstation installation complete${NC}"
+    if [[ "$INSTALL_MODE" == "repair" ]]; then
+        echo -e "${GREEN}✓ VMware Workstation repair complete${NC}"
+    else
+        echo -e "${GREEN}✓ VMware Workstation installation complete${NC}"
+    fi
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     
     if [[ $WARNINGS -gt 0 ]]; then
-        echo -e "\n${YELLOW}Note: $WARNINGS warning(s) detected${NC}"
-        echo -e "${YELLOW}Run 'sudo reboot' for all changes to take effect${NC}"
+        echo -e "\n${YELLOW}⚠ $WARNINGS warning(s) detected${NC}"
+        echo -e "${YELLOW}Required actions:${NC}"
+        echo -e "  ${GRAY}1. Reboot system:${NC} sudo reboot"
+        echo -e "  ${GRAY}2. After reboot, log out and back in for group changes${NC}"
     fi
     
-    echo -e "\n${CYAN}Launch VMware:${NC} vmware"
-    echo -e "${CYAN}Command line:${NC} vmware &"
-    echo -e "${CYAN}Auto-rebuild:${NC} Modules rebuild on kernel updates"
-    echo -e "${CYAN}Full logs:${NC} $LOG_FILE"
+    echo -e "\n${CYAN}Quick Start:${NC}"
+    echo -e "  ${GRAY}Launch GUI:${NC} vmware &"
+    echo -e "  ${GRAY}CLI tool:${NC} vmrun"
+    echo -e "  ${GRAY}Check services:${NC} systemctl status vmware-networks"
+    echo -e "  ${GRAY}Check modules:${NC} lsmod | grep vm"
+    
+    echo -e "\n${CYAN}Network Configuration:${NC}"
+    echo -e "  ${GRAY}vmnet1 (Host-Only):${NC} 192.168.100.0/24"
+    echo -e "  ${GRAY}vmnet8 (NAT):${NC} 192.168.200.0/24"
+    
+    echo -e "\n${CYAN}Auto-Features:${NC}"
+    echo -e "  ${GRAY}✓ Modules rebuild on kernel updates${NC}"
+    echo -e "  ${GRAY}✓ Services start on boot${NC}"
+    echo -e "  ${GRAY}✓ Modules load on boot${NC}"
+    
+    echo -e "\n${CYAN}Full logs:${NC} $LOG_FILE"
 else
     echo -e "\n${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${RED}Installation completed with $ERRORS error(s), $WARNINGS warning(s)${NC}"
@@ -343,9 +662,11 @@ else
     echo -e "  ${GRAY}Check modules:${NC} lsmod | grep vm"
     echo -e "  ${GRAY}Load modules:${NC} sudo modprobe vmmon vmw_vmci vmnet"
     echo -e "  ${GRAY}Check services:${NC} systemctl status vmware-networks"
+    echo -e "  ${GRAY}Reconfigure:${NC} sudo vmware-modconfig --console --install-all"
     echo -e "  ${GRAY}Full logs:${NC} $LOG_FILE"
-    echo -e "\n${YELLOW}Manual installation:${NC}"
+    echo -e "\n${YELLOW}Manual retry:${NC}"
     echo -e "  ${GRAY}yay -S vmware-keymaps vmware-workstation${NC}"
+    echo -e "\n${YELLOW}Or run this script again and choose repair mode${NC}"
 fi
 
 echo ""
