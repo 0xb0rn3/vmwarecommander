@@ -276,7 +276,7 @@ case "$DISTRO_FAMILY" in
             }
             
             {
-                sudo -u "$ACTUAL_USER" $AUR_HELPER -S --needed --noconfirm vmware-workstation
+                sudo -u "$ACTUAL_USER" $AUR_HELPER -S --needed --noconfirm vmware-keymaps vmware-workstation
             } &
             spinner $! "Building vmware-workstation with yay" >&3
             wait $!
@@ -312,6 +312,7 @@ case "$DISTRO_FAMILY" in
                 build-essential \
                 linux-headers-$(uname -r) \
                 dkms \
+                vmware-keymaps \
                 git \
                 gcc \
                 make \
@@ -340,6 +341,7 @@ case "$DISTRO_FAMILY" in
         
         {
             $PKG_MGR install -y \
+                vmware-keymaps \
                 kernel-devel \
                 kernel-headers \
                 gcc \
@@ -369,6 +371,7 @@ case "$DISTRO_FAMILY" in
     suse)
         {
             zypper install -y \
+                vmware-keymaps \
                 kernel-devel \
                 gcc \
                 make \
